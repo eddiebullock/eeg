@@ -1,4 +1,3 @@
-import serial
 import numpy as np
 import pyqtgraph as pg
 from pyqtgraph.Qt import QtCore
@@ -9,11 +8,9 @@ from scipy.signal import spectrogram
 import time
 import os
 
-class ContinuousEEGMonitor:
+class SimulatedEEGMonitor:
     def __init__(self):
         # Configuration parameters
-        self.SERIAL_PORT = 'COM4'  # Replace with your COM port
-        self.BAUD_RATE = 115200
         self.SAMPLING_RATE = 500  # Hz
         
         # Buffer sizes
@@ -27,29 +24,31 @@ class ContinuousEEGMonitor:
         
         # Data buffers
         self.eeg_buffer = deque(maxlen=self.spectrogram_buffer_size)
-        self.time_axis = np.linspace(-self.DISPLAY_WINDOW, 0, self.display_buffer_size)
         
         # File saving
         self.recording = False
         self.output_file = None
         self.start_time = None
         
-        # Setup serial connection
-        try:
-            self.ser = serial.Serial(self.SERIAL_PORT, self.BAUD_RATE)
-            print(f"Connected to {self.SERIAL_PORT}")
-        except Exception as e:
-            print(f"Could not connect to serial port: {e}")
-            sys.exit(1)
+        # Simulation parameters
+        self.simulation_freq = [3, 10, 30]  # Hz - simulate alpha, beta, theta waves
+        self.simulation_amp = [10, 5, 2]    # Amplitudes
+        self.noise_level = 2                # Background noise level
+        self.sample_counter = 0             # Counter for generating samples
         
         # Initialize GUI
         self.init_gui()
+        
+        # Initial buffer fill with simulated data
+        print("Generating initial data...")
+        self.generate_initial_data()
+        print("Done generating initial data.")
     
     def init_gui(self):
         # Create application and main window
         self.app = QApplication(sys.argv)
         self.main_window = QWidget()
-        self.main_window.setWindowTitle("Static EEG Monitor (20-second updates)")
+        self.main_window.setWindowTitle("Simulated EEG Monitor (20-second updates)")
         self.main_window.resize(1200, 800)
         
         # Create main layout
@@ -64,7 +63,7 @@ class ContinuousEEGMonitor:
         self.time_plot = self.graph_widget.addPlot(row=0, col=0)
         self.time_plot.setLabel('left', 'Amplitude')
         self.time_plot.setLabel('bottom', 'Time (s)')
-        self.time_plot.setTitle('Raw EEG Signal (Last 20 seconds)')
+        self.time_plot.setTitle('Simulated EEG Signal (Last 20 seconds)')
         self.time_curve = self.time_plot.plot(pen='y')
         
         # Add grid to time plot for better readability
@@ -90,7 +89,7 @@ class ContinuousEEGMonitor:
         main_layout.addLayout(control_layout)
         
         # Create status label
-        self.status_label = QLabel("Status: Running")
+        self.status_label = QLabel("Status: Generating simulated EEG data")
         control_layout.addWidget(self.status_label)
         
         # Create record button
@@ -103,19 +102,78 @@ class ContinuousEEGMonitor:
         self.save_button.clicked.connect(self.save_spectrogram)
         control_layout.addWidget(self.save_button)
         
+        # Add frequency adjustment buttons
+        self.alpha_button = QPushButton("More Alpha (8-13 Hz)")
+        self.alpha_button.clicked.connect(self.increase_alpha)
+        control_layout.addWidget(self.alpha_button)
+        
+        self.beta_button = QPushButton("More Beta (13-30 Hz)")
+        self.beta_button.clicked.connect(self.increase_beta)
+        control_layout.addWidget(self.beta_button)
+        
         # Setup update timer
         self.timer = QtCore.QTimer()
         self.timer.timeout.connect(self.update)
         self.timer.start(int(self.UPDATE_INTERVAL * 1000))  # Convert to milliseconds
         
+        # Also add a faster timer for continuous data generation
+        self.data_timer = QtCore.QTimer()
+        self.data_timer.timeout.connect(self.generate_data)
+        self.data_timer.start(50)  # Generate data every 50ms
+        
         # Show the window
         self.main_window.show()
+    
+    def increase_alpha(self):
+        self.simulation_amp[0] += 5
+        self.status_label.setText(f"Status: Increased alpha waves (8-13 Hz)")
+    
+    def increase_beta(self):
+        self.simulation_amp[1] += 5
+        self.status_label.setText(f"Status: Increased beta waves (13-30 Hz)")
+    
+    def generate_sample(self):
+        # Generate a sample based on simulated brain waves
+        t = self.sample_counter / self.SAMPLING_RATE
+        
+        # Create signals for different brain wave bands
+        sample = 0
+        for freq, amp in zip(self.simulation_freq, self.simulation_amp):
+            sample += amp * np.sin(2 * np.pi * freq * t)
+        
+        # Add random noise
+        sample += np.random.normal(0, self.noise_level)
+        
+        # Add occasional artifacts
+        if np.random.random() < 0.001:  # 0.1% chance of artifact
+            sample += np.random.normal(0, 50)  # Big spike
+        
+        self.sample_counter += 1
+        return int(sample)
+    
+    def generate_initial_data(self):
+        # Generate a full buffer of data
+        for _ in range(self.spectrogram_buffer_size):
+            sample = self.generate_sample()
+            self.eeg_buffer.append(sample)
+    
+    def generate_data(self):
+        # Generate a few new samples each time this is called
+        num_samples = 20  # Generate 20 samples (about 40ms of data at 500Hz)
+        for _ in range(num_samples):
+            sample = self.generate_sample()
+            self.eeg_buffer.append(sample)
+            
+            # Save to file if recording
+            if self.recording and self.output_file:
+                value_bytes = sample.to_bytes(2, byteorder='little', signed=True)
+                self.output_file.write(value_bytes)
     
     def toggle_recording(self):
         if not self.recording:
             # Start recording
             timestamp = time.strftime("%Y%m%d-%H%M%S")
-            self.output_filename = f"EEG_RECORDING_{timestamp}.dat"
+            self.output_filename = f"SIMULATED_EEG_{timestamp}.dat"
             try:
                 self.output_file = open(self.output_filename, 'wb')
                 self.recording = True
@@ -139,7 +197,7 @@ class ContinuousEEGMonitor:
             try:
                 # Generate filename
                 timestamp = time.strftime("%Y%m%d-%H%M%S")
-                spec_filename = f"EEG_SPEC_{timestamp}.png"
+                spec_filename = f"SIMULATED_EEG_SPEC_{timestamp}.png"
                 
                 # Create a matplotlib figure for saving
                 import matplotlib.pyplot as plt
@@ -162,11 +220,11 @@ class ContinuousEEGMonitor:
                 
                 # Plot and save
                 plt.figure(figsize=(10, 6))
-                plt.pcolormesh(t, f_filtered, 10 * np.log10(Sxx_filtered), shading='gouraud')
+                plt.pcolormesh(t, f_filtered, 10 * np.log10(Sxx_filtered + 1e-10), shading='gouraud')
                 plt.colorbar(label='Power (dB)')
                 plt.ylabel('Frequency (Hz)')
                 plt.xlabel('Time (s)')
-                plt.title(f'EEG Spectrogram - {timestamp}')
+                plt.title(f'Simulated EEG Spectrogram - {timestamp}')
                 plt.ylim(0.5, 100)
                 plt.tight_layout()
                 plt.savefig(spec_filename)
@@ -232,38 +290,14 @@ class ContinuousEEGMonitor:
             # Set fixed x-range
             self.spec_plot.setXRange(0, self.SPECTROGRAM_WINDOW)
     
-    def read_serial_data(self):
-        # Read all available data from serial port
-        bytes_to_read = self.ser.in_waiting
-        if bytes_to_read >= 2:  # Each sample is 2 bytes
-            # Read data in chunks of 2 bytes
-            num_samples = bytes_to_read // 2
-            for _ in range(num_samples):
-                data = self.ser.read(2)
-                if len(data) == 2:
-                    # Convert to integer (16-bit signed)
-                    value = int.from_bytes(data, byteorder='little', signed=True)
-                    
-                    # Add to buffer
-                    self.eeg_buffer.append(value)
-                    
-                    # Save to file if recording
-                    if self.recording and self.output_file:
-                        self.output_file.write(data)
-    
     def update(self):
-        # Read new data
-        self.read_serial_data()
+        # Update plots
+        self.update_time_plot()
+        self.update_spectrogram()
         
-        # Check if we have enough data for a full window
-        if len(self.eeg_buffer) >= self.spectrogram_buffer_size:
-            # Update plots
-            self.update_time_plot()
-            self.update_spectrogram()
-            
-            # Update status to show when the display was last refreshed
-            current_time = time.strftime("%H:%M:%S", time.localtime())
-            self.status_label.setText(f"Status: Display updated at {current_time} (Updates every {self.UPDATE_INTERVAL} seconds)")
+        # Update status to show when the display was last refreshed
+        current_time = time.strftime("%H:%M:%S", time.localtime())
+        self.status_label.setText(f"Status: Display updated at {current_time} (Updates every {self.UPDATE_INTERVAL} seconds)")
     
     def run(self):
         # Start the application event loop
@@ -271,12 +305,11 @@ class ContinuousEEGMonitor:
     
     def __del__(self):
         # Clean up
-        if self.ser.is_open:
-            self.ser.close()
         if self.recording and self.output_file:
             self.output_file.close()
 
 # Run the application
 if __name__ == "__main__":
-    monitor = ContinuousEEGMonitor()
+    print("Starting simulated EEG monitor...")
+    monitor = SimulatedEEGMonitor()
     monitor.run()
